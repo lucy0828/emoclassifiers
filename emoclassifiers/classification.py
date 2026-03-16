@@ -1,4 +1,5 @@
 import asyncio
+import json
 from enum import Enum
 import openai
 import pydantic
@@ -86,7 +87,7 @@ def get_emo_classifiers_v2_prompt(
     )
 
 
-def get_emo_classifiers_prompt( 
+def get_emo_classifiers_prompt(
     classifier_definition: dict,
     chunk: Chunk,
 ) -> str:
@@ -127,19 +128,51 @@ class ModelWrapper:
     ) -> YesNoUnsureEnum:
         """
         Classify a single conversaiton chunk.
+        Tries beta.parse() endpoint first, falls back to standard API with JSON mode if not available.
         """
         prompt = get_emo_classifiers_prompt(classifier_definition=classifier_definition, chunk=chunk)
         async with self.semaphore:
-            response = await self.openai_client.beta.chat.completions.parse(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format=ResponseFormat,
-                max_completion_tokens=max_completion_tokens,
-            )
-        message = response.choices[0].message
-        assert message.parsed, "Failed to parse response"
-        return message.parsed.response
-    
+            try:
+                # Try beta.parse() endpoint first (requires special API access)
+                response = await self.openai_client.beta.chat.completions.parse(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format=ResponseFormat,
+                    max_completion_tokens=max_completion_tokens,
+                )
+                message = response.choices[0].message
+                assert message.parsed, "Failed to parse response"
+                return message.parsed.response
+            except (openai.PermissionDeniedError, AttributeError) as e:
+                # Fall back to standard API with JSON mode if beta endpoint is not available
+                # Add instruction to return JSON format
+                json_prompt = prompt + "\n\nPlease respond with a JSON object with a 'response' field containing one of: 'yes', 'no', or 'unsure'."
+                response = await self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": json_prompt}],
+                    response_format={"type": "json_object"},
+                    max_completion_tokens=max_completion_tokens,
+                )
+                message = response.choices[0].message
+                content = message.content
+                if content is None:
+                    raise ValueError("Empty response from OpenAI API")
+                # Parse JSON response
+                try:
+                    parsed_json = json.loads(content)
+                    response_value = parsed_json.get("response", "").lower()
+                    # Map to enum
+                    if response_value == "yes":
+                        return YesNoUnsureEnum.YES
+                    elif response_value == "no":
+                        return YesNoUnsureEnum.NO
+                    elif response_value == "unsure":
+                        return YesNoUnsureEnum.UNSURE
+                    else:
+                        raise ValueError(f"Invalid response value: {response_value}. Expected 'yes', 'no', or 'unsure'.")
+                except json.JSONDecodeError as json_err:
+                    raise ValueError(f"Failed to parse JSON response: {content}. Error: {json_err}")
+
 
 
 class EmoClassifier:

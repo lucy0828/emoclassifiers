@@ -8,6 +8,26 @@ As decribed in the paper, these classifiers may misclassify conversations, but t
 
 The installation is straightforward and the only dependency is the OpenAI client.
 
+### Using uv
+
+If you're using `uv` for package management:
+
+```bash
+# Create and activate a virtual environment
+uv venv
+source .venv/bin/activate  # On macOS/Linux
+# or
+.venv\Scripts\activate  # On Windows
+
+# Install dependencies
+uv pip install -r requirements.txt
+uv pip install -e .
+```
+
+### Using pip
+
+Alternatively, you can use pip directly:
+
 ```
 pip install -r requirements.txt
 pip install -e .
